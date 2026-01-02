@@ -1,4 +1,4 @@
-# Lenient parsing fail-open and DoS hotspots
+# Lenient brute-force reachability and DoS hotspots
 
 This document summarizes places in the PDFBox parser where `lenient = true` causes malformed input to be accepted or auto-repaired instead of failing fast.
 
