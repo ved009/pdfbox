@@ -75,10 +75,6 @@ public class BruteForceParser
     private static final long DEFAULT_MAX_BRUTE_FORCE_OBJECTS = 200000;
     private static final String EXCEEDED_MAX_BYTES_MESSAGE = "Brute-force search exceeded maxBytes";
     private static final String EXCEEDED_MAX_OBJECTS_MESSAGE = "Brute-force search exceeded maxObjects";
-    private static final long MAX_BRUTE_FORCE_BYTES = getPositiveLongProperty(
-            MAX_BRUTE_FORCE_BYTES_PROPERTY, DEFAULT_MAX_BRUTE_FORCE_BYTES);
-    private static final long MAX_BRUTE_FORCE_OBJECTS = getPositiveLongProperty(
-            MAX_BRUTE_FORCE_OBJECTS_PROPERTY, DEFAULT_MAX_BRUTE_FORCE_OBJECTS);
 
     private static final Logger LOG = LogManager.getLogger(BruteForceParser.class);
 
@@ -156,103 +152,113 @@ public class BruteForceParser
      */
     private void bfSearchForObjects() throws IOException
     {
-        long lastEOFMarker = bfSearchForLastEOFMarker();
         long originOffset = source.getPosition();
-        long currentOffset = MINIMUM_SEARCH_OFFSET;
-        long maxSearchOffset = safeAdd(MINIMUM_SEARCH_OFFSET, MAX_BRUTE_FORCE_BYTES);
-        long searchLimit = Math.min(lastEOFMarker, maxSearchOffset);
-        long lastObjectId = Long.MIN_VALUE;
-        int lastGenID = Integer.MIN_VALUE;
-        long lastObjOffset = Long.MIN_VALUE;
-        char[] endobjString = "ndo".toCharArray();
-        char[] endobjRemainingString = "bj".toCharArray();
-        boolean endOfObjFound = false;
-        do
+        long maxBruteForceBytes = getMaxBruteForceBytes();
+        try
         {
-            source.seek(currentOffset);
-            int nextChar = source.read();
-            currentOffset++;
-            if (BaseParser.isWhitespace(nextChar) && parser.isString(OBJ_MARKER))
+            long lastEOFMarker = bfSearchForLastEOFMarker();
+            long currentOffset = MINIMUM_SEARCH_OFFSET;
+            long maxSearchOffset = safeAdd(MINIMUM_SEARCH_OFFSET, maxBruteForceBytes);
+            long searchLimit = Math.min(lastEOFMarker, maxSearchOffset);
+            long lastObjectId = Long.MIN_VALUE;
+            int lastGenID = Integer.MIN_VALUE;
+            long lastObjOffset = Long.MIN_VALUE;
+            char[] endobjString = "ndo".toCharArray();
+            char[] endobjRemainingString = "bj".toCharArray();
+            boolean endOfObjFound = false;
+            do
             {
-                long tempOffset = currentOffset - 2;
-                source.seek(tempOffset);
-                int genID = source.peek();
-                // is the next char a digit?
-                if (BaseParser.isDigit(genID))
+                source.seek(currentOffset);
+                int nextChar = source.read();
+                currentOffset++;
+                if (BaseParser.isWhitespace(nextChar) && parser.isString(OBJ_MARKER))
                 {
-                    genID -= 48;
-                    tempOffset--;
+                    long tempOffset = currentOffset - 2;
                     source.seek(tempOffset);
-                    if (parser.isWhitespace())
+                    int genID = source.peek();
+                    // is the next char a digit?
+                    if (BaseParser.isDigit(genID))
                     {
-                        while (tempOffset > MINIMUM_SEARCH_OFFSET && parser.isWhitespace())
+                        genID -= 48;
+                        tempOffset--;
+                        source.seek(tempOffset);
+                        if (parser.isWhitespace())
                         {
-                            source.seek(--tempOffset);
-                        }
-                        boolean objectIDFound = false;
-                        while (tempOffset > MINIMUM_SEARCH_OFFSET && parser.isDigit())
-                        {
-                            source.seek(--tempOffset);
-                            objectIDFound = true;
-                        }
-                        if (objectIDFound)
-                        {
-                            source.read();
-                            long objectId = parser.readObjectNumber();
-                            if (lastObjOffset > 0)
+                            while (tempOffset > MINIMUM_SEARCH_OFFSET && parser.isWhitespace())
                             {
-                                // add the former object ID only if there was a subsequent object ID
-                                addFoundObject(new COSObjectKey(lastObjectId, lastGenID),
-                                        lastObjOffset);
+                                source.seek(--tempOffset);
                             }
-                            lastObjectId = objectId;
-                            lastGenID = genID;
-                            lastObjOffset = tempOffset + 1;
-                            currentOffset += OBJ_MARKER.length - 1;
-                            endOfObjFound = false;
+                            boolean objectIDFound = false;
+                            while (tempOffset > MINIMUM_SEARCH_OFFSET && parser.isDigit())
+                            {
+                                source.seek(--tempOffset);
+                                objectIDFound = true;
+                            }
+                            if (objectIDFound)
+                            {
+                                source.read();
+                                long objectId = parser.readObjectNumber();
+                                if (lastObjOffset > 0)
+                                {
+                                    // add the former object ID only if there was a subsequent object ID
+                                    addFoundObject(new COSObjectKey(lastObjectId, lastGenID),
+                                            lastObjOffset);
+                                }
+                                lastObjectId = objectId;
+                                lastGenID = genID;
+                                lastObjOffset = tempOffset + 1;
+                                currentOffset += OBJ_MARKER.length - 1;
+                                endOfObjFound = false;
+                            }
                         }
                     }
                 }
-            }
-            // check for "endo" as abbreviation for "endobj", as the pdf may be cut off
-            // in the middle of the keyword, see PDFBOX-3936.
-            // We could possibly implement a more intelligent algorithm if necessary
-            else if (nextChar == 'e' && parser.isString(endobjString))
+                // check for "endo" as abbreviation for "endobj", as the pdf may be cut off
+                // in the middle of the keyword, see PDFBOX-3936.
+                // We could possibly implement a more intelligent algorithm if necessary
+                else if (nextChar == 'e' && parser.isString(endobjString))
+                {
+                    currentOffset += endobjString.length;
+                    source.seek(currentOffset);
+                    if (parser.isEOF())
+                    {
+                        endOfObjFound = true;
+                    }
+                    else if (parser.isString(endobjRemainingString))
+                    {
+                        currentOffset += endobjRemainingString.length;
+                        endOfObjFound = true;
+                    }
+                }
+            } while (currentOffset < searchLimit && !parser.isEOF());
+            if (searchLimit == maxSearchOffset && currentOffset >= maxSearchOffset
+                    && lastEOFMarker >= maxSearchOffset)
             {
-                currentOffset += endobjString.length;
-                source.seek(currentOffset);
-                if (parser.isEOF())
-                {
-                    endOfObjFound = true;
-                }
-                else if (parser.isString(endobjRemainingString))
-                {
-                    currentOffset += endobjRemainingString.length;
-                    endOfObjFound = true;
-                }
+                throw new IOException(getExceededLimitMessage(EXCEEDED_MAX_BYTES_MESSAGE,
+                        MAX_BRUTE_FORCE_BYTES_PROPERTY, maxBruteForceBytes));
             }
-        } while (currentOffset < searchLimit && !parser.isEOF());
-        if (searchLimit == maxSearchOffset && currentOffset >= maxSearchOffset
-                && lastEOFMarker >= maxSearchOffset)
-        {
-            throw new IOException(EXCEEDED_MAX_BYTES_MESSAGE);
+            if ((lastEOFMarker < Long.MAX_VALUE || endOfObjFound) && lastObjOffset > 0)
+            {
+                // if the pdf wasn't cut off in the middle or if the last object ends with a "endobj" marker
+                // the last object id has to be added here so that it can't get lost as there isn't any subsequent object id
+                addFoundObject(new COSObjectKey(lastObjectId, lastGenID), lastObjOffset);
+            }
         }
-        if ((lastEOFMarker < Long.MAX_VALUE || endOfObjFound) && lastObjOffset > 0)
+        finally
         {
-            // if the pdf wasn't cut off in the middle or if the last object ends with a "endobj" marker
-            // the last object id has to be added here so that it can't get lost as there isn't any subsequent object id
-            addFoundObject(new COSObjectKey(lastObjectId, lastGenID), lastObjOffset);
+            // reestablish origin position
+            source.seek(originOffset);
         }
-        // reestablish origin position
-        source.seek(originOffset);
     }
 
     private void addFoundObject(COSObjectKey key, long offset) throws IOException
     {
+        long maxBruteForceObjects = getMaxBruteForceObjects();
         if (!bfSearchCOSObjectKeyOffsets.containsKey(key)
-                && bfSearchCOSObjectKeyOffsets.size() >= MAX_BRUTE_FORCE_OBJECTS)
+                && bfSearchCOSObjectKeyOffsets.size() >= maxBruteForceObjects)
         {
-            throw new IOException(EXCEEDED_MAX_OBJECTS_MESSAGE);
+            throw new IOException(getExceededLimitMessage(EXCEEDED_MAX_OBJECTS_MESSAGE,
+                    MAX_BRUTE_FORCE_OBJECTS_PROPERTY, maxBruteForceObjects));
         }
         bfSearchCOSObjectKeyOffsets.put(key, offset);
     }
@@ -854,6 +860,18 @@ public class BruteForceParser
         return result;
     }
 
+    private static long getMaxBruteForceBytes()
+    {
+        return getPositiveLongProperty(MAX_BRUTE_FORCE_BYTES_PROPERTY,
+                DEFAULT_MAX_BRUTE_FORCE_BYTES);
+    }
+
+    private static long getMaxBruteForceObjects()
+    {
+        return getPositiveLongProperty(MAX_BRUTE_FORCE_OBJECTS_PROPERTY,
+                DEFAULT_MAX_BRUTE_FORCE_OBJECTS);
+    }
+
     private static long getPositiveLongProperty(String property, long defaultValue)
     {
         Long value = Long.getLong(property);
@@ -862,6 +880,11 @@ public class BruteForceParser
             return defaultValue;
         }
         return value;
+    }
+
+    private static String getExceededLimitMessage(String baseMessage, String propertyKey, long limit)
+    {
+        return baseMessage + " (" + propertyKey + "=" + limit + ')';
     }
 
     /**
