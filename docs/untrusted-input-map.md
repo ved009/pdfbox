@@ -3,7 +3,7 @@
 This document summarizes the public APIs and main code paths that ingest or process untrusted PDF content. It highlights the areas most relevant to parsing, rendering, signature handling, forms, annotations, embedded files, JavaScript actions, and incremental updates.
 
 ## Parsing and document loading
-- **Loader.loadPDF(...)** provides byte-array, file, and `RandomAccessRead` entry points that construct a `PDFParser` and return a `PDDocument`. These methods accept passwords and optional key stores, meaning they are the first boundary for untrusted input and decryption context.【F:pdfbox/src/main/java/org/apache/pdfbox/Loader.java†L168-L242】【F:pdfbox/src/main/java/org/apache/pdfbox/Loader.java†L255-L259】
+- **Loader.loadPDF(...)** provides byte-array, file, and `RandomAccessRead` entry points that construct a `PDFParser` and return a `PDDocument`. These methods accept passwords and optional key stores, meaning they are the first boundary for untrusted input and decryption context.【F:pdfbox/src/main/java/org/apache/pdfbox/Loader.java†L168-L242】【F:pdfbox/src/main/java/org/apache/pdfbox/Loader.java†L255-L259】 See the companion [Loader/PDFParser security deep dive](./loader-security-deep-dive.md) for attacker-controlled inputs, missing constraints, and mitigation guidance.
 - **PDFParser.load(...)** legacy static helpers delegate to `Loader` but still expose parsing for external callers, ultimately creating a `PDDocument` from the parsed COS structures.【F:pdfbox/src/main/java/org/apache/pdfbox/pdfparser/PDFParser.java†L199-L236】
 
 ## Rendering and page content processing
