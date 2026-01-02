@@ -69,6 +69,17 @@ public class BruteForceParser
      */
     private static final char[] OBJ_STREAM = { '/', 'O', 'b', 'j', 'S', 't', 'm' };
 
+    private static final String MAX_BRUTE_FORCE_BYTES_PROPERTY = "pdfbox.bruteforce.maxBytes";
+    private static final long DEFAULT_MAX_BRUTE_FORCE_BYTES = 16 * 1024 * 1024;
+    private static final String MAX_BRUTE_FORCE_OBJECTS_PROPERTY = "pdfbox.bruteforce.maxObjects";
+    private static final long DEFAULT_MAX_BRUTE_FORCE_OBJECTS = 200000;
+    private static final String EXCEEDED_MAX_BYTES_MESSAGE = "Brute-force search exceeded maxBytes";
+    private static final String EXCEEDED_MAX_OBJECTS_MESSAGE = "Brute-force search exceeded maxObjects";
+    private static final long MAX_BRUTE_FORCE_BYTES = getPositiveLongProperty(
+            MAX_BRUTE_FORCE_BYTES_PROPERTY, DEFAULT_MAX_BRUTE_FORCE_BYTES);
+    private static final long MAX_BRUTE_FORCE_OBJECTS = getPositiveLongProperty(
+            MAX_BRUTE_FORCE_OBJECTS_PROPERTY, DEFAULT_MAX_BRUTE_FORCE_OBJECTS);
+
     private static final Logger LOG = LogManager.getLogger(BruteForceParser.class);
 
     /**
@@ -77,6 +88,7 @@ public class BruteForceParser
     private final Map<COSObjectKey, Long> bfSearchCOSObjectKeyOffsets = new HashMap<>();
 
     private boolean bfSearchTriggered = false;
+    private IOException bfSearchException;
 
     private final COSParser parser;
     private final COSDocument document;
@@ -117,10 +129,22 @@ public class BruteForceParser
      */
     protected Map<COSObjectKey, Long> getBFCOSObjectOffsets() throws IOException
     {
+        if (bfSearchException != null)
+        {
+            throw bfSearchException;
+        }
         if (!bfSearchTriggered)
         {
             bfSearchTriggered = true;
-            bfSearchForObjects();
+            try
+            {
+                bfSearchForObjects();
+            }
+            catch (IOException exception)
+            {
+                bfSearchException = exception;
+                throw exception;
+            }
         }
         return bfSearchCOSObjectKeyOffsets;
     }
@@ -135,6 +159,8 @@ public class BruteForceParser
         long lastEOFMarker = bfSearchForLastEOFMarker();
         long originOffset = source.getPosition();
         long currentOffset = MINIMUM_SEARCH_OFFSET;
+        long maxSearchOffset = safeAdd(MINIMUM_SEARCH_OFFSET, MAX_BRUTE_FORCE_BYTES);
+        long searchLimit = Math.min(lastEOFMarker, maxSearchOffset);
         long lastObjectId = Long.MIN_VALUE;
         int lastGenID = Integer.MIN_VALUE;
         long lastObjOffset = Long.MIN_VALUE;
@@ -176,8 +202,8 @@ public class BruteForceParser
                             if (lastObjOffset > 0)
                             {
                                 // add the former object ID only if there was a subsequent object ID
-                                bfSearchCOSObjectKeyOffsets.put(
-                                        new COSObjectKey(lastObjectId, lastGenID), lastObjOffset);
+                                addFoundObject(new COSObjectKey(lastObjectId, lastGenID),
+                                        lastObjOffset);
                             }
                             lastObjectId = objectId;
                             lastGenID = genID;
@@ -205,16 +231,30 @@ public class BruteForceParser
                     endOfObjFound = true;
                 }
             }
-        } while (currentOffset < lastEOFMarker && !parser.isEOF());
+        } while (currentOffset < searchLimit && !parser.isEOF());
+        if (searchLimit == maxSearchOffset && currentOffset >= maxSearchOffset
+                && lastEOFMarker >= maxSearchOffset)
+        {
+            throw new IOException(EXCEEDED_MAX_BYTES_MESSAGE);
+        }
         if ((lastEOFMarker < Long.MAX_VALUE || endOfObjFound) && lastObjOffset > 0)
         {
             // if the pdf wasn't cut off in the middle or if the last object ends with a "endobj" marker
             // the last object id has to be added here so that it can't get lost as there isn't any subsequent object id
-            bfSearchCOSObjectKeyOffsets.put(new COSObjectKey(lastObjectId, lastGenID),
-                    lastObjOffset);
+            addFoundObject(new COSObjectKey(lastObjectId, lastGenID), lastObjOffset);
         }
         // reestablish origin position
         source.seek(originOffset);
+    }
+
+    private void addFoundObject(COSObjectKey key, long offset) throws IOException
+    {
+        if (!bfSearchCOSObjectKeyOffsets.containsKey(key)
+                && bfSearchCOSObjectKeyOffsets.size() >= MAX_BRUTE_FORCE_OBJECTS)
+        {
+            throw new IOException(EXCEEDED_MAX_OBJECTS_MESSAGE);
+        }
+        bfSearchCOSObjectKeyOffsets.put(key, offset);
     }
 
     /**
@@ -802,6 +842,26 @@ public class BruteForceParser
             readChar = source.read();
         }
         return position;
+    }
+
+    private static long safeAdd(long base, long increment)
+    {
+        long result = base + increment;
+        if (increment > 0 && result < base)
+        {
+            return Long.MAX_VALUE;
+        }
+        return result;
+    }
+
+    private static long getPositiveLongProperty(String property, long defaultValue)
+    {
+        Long value = Long.getLong(property);
+        if (value == null || value <= 0)
+        {
+            return defaultValue;
+        }
+        return value;
     }
 
     /**
