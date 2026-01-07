@@ -41,6 +41,7 @@
     <module>app</module>
     <module>debugger-app</module>
     <module>examples</module>
+    <module>sig-poc</module>
   </modules>
 
   <scm>
